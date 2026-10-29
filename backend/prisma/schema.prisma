@@ -1,0 +1,513 @@
+// FDR Portal - Prisma Schema
+// NOTE: The MongoDB connector does not support Prisma enums, so all enum-like
+// fields are stored as String and validated at the application layer with Zod.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// Models
+// ============================================
+
+model User {
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  email          String    @unique
+  passwordHash   String
+  name           String
+  role           String
+  status         String    @default("ACTIVE")
+  institutionId  String?   @db.ObjectId
+  bankId         String?   @db.ObjectId
+  mfaEnabled     Boolean   @default(false)
+  mfaSecret      String?
+  mfaBackupCodes String[]
+  avatarUrl      String?
+  lastLoginAt    DateTime?
+  refreshTokens  RefreshToken[]
+  notifications  Notification[]
+  passwordResetTokens PasswordResetToken[]
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  institution              Institution?     @relation("UserInstitution", fields: [institutionId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  bank                     Bank?            @relation("UserBank", fields: [bankId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdFDRs              FDR[]            @relation("FDRCreatedBy")
+  verifiedFDRs             FDR[]            @relation("FDRVerifiedBy")
+  assignedFDRs             FDR[]            @relation("FDRAssignedTo")
+  nodalOfficerFor          Institution[]    @relation("InstitutionNodalOfficer")
+  requestedReleaseRequests ReleaseRequest[] @relation("ReleaseRequestedBy")
+  recommendedReleaseReqs   ReleaseRequest[] @relation("ReleaseRecommendedBy")
+  approvedReleaseRequests  ReleaseRequest[] @relation("ReleaseApprovedBy")
+  rejectedReleaseRequests  ReleaseRequest[] @relation("ReleaseRejectedBy")
+
+  @@index([institutionId])
+  @@index([bankId])
+  @@index([role])
+}
+
+model RefreshToken {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  tokenHash String   @unique
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model PasswordResetToken {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String    @db.ObjectId
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  requestedIp String?
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Institution {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  name           String
+  code           String   @unique
+  address        String
+  city           String
+  state          String
+  pincode        String
+  phone          String
+  email          String
+  website        String?
+  logoUrl        String?
+  nodalOfficerId String?  @db.ObjectId
+  contactPerson  String?
+  contactPhone   String?
+  contactEmail   String?
+  isActive       Boolean  @default(true)
+  users          User[]   @relation("UserInstitution")
+  nodalOfficer   User?    @relation("InstitutionNodalOfficer", fields: [nodalOfficerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  fdrs           FDR[]    @relation("InstitutionFDRs")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([state])
+}
+
+model Bank {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  code      String   @unique
+  logoUrl   String?
+  isActive  Boolean  @default(true)
+  branches  BankBranch[]
+  users     User[]       @relation("UserBank")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+}
+
+model BankBranch {
+  id                     String                @id @default(auto()) @map("_id") @db.ObjectId
+  bankId                 String                @db.ObjectId
+  ifscCode               String                @unique
+  branchName             String
+  address                String
+  city                   String
+  district               String?
+  state                  String
+  pincode                String
+  contactPhone           String?
+  contactEmail           String?
+  contactPerson          String?
+  contactDesignation     String?
+  isVerified             Boolean               @default(false)
+  verifiedAt             DateTime?
+  verificationExpiry     DateTime?
+  verificationRequests   VerificationRequest[]
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
+
+  bank Bank @relation(fields: [bankId], references: [id], onDelete: Cascade)
+
+  @@index([bankId])
+  @@index([city])
+  @@index([state])
+  @@index([isVerified])
+}
+
+model FDR {
+  id                     String    @id @default(auto()) @map("_id") @db.ObjectId
+  institutionId          String    @db.ObjectId
+  fdrNumber              String
+  bankId                 String    @db.ObjectId
+  bankName               String
+  branchName             String
+  ifscCode               String
+  amount                 Float
+  issueDate              DateTime
+  maturityDate           DateTime
+  interestRate           Float?
+  interestAmount         Float?
+  status                 String    @default("DRAFT")
+  assuranceLevel         String?
+  riskScore              Int       @default(0)
+  verifiedBy             String?   @db.ObjectId
+  verifiedAt             DateTime?
+  bankVerificationId     String?   @db.ObjectId
+  bankVerificationResult Json?
+  createdBy              String    @db.ObjectId
+  assignedTo             String?   @db.ObjectId
+  assignedAt             DateTime?
+  parentFdrId            String?   @db.ObjectId
+  renewalCount           Int       @default(0)
+  releaseRequestId       String?   @db.ObjectId
+  releasedAt             DateTime?
+  releaseCertificateUrl  String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  institution    Institution        @relation("InstitutionFDRs", fields: [institutionId], references: [id], onDelete: Cascade)
+  createdByUser  User               @relation("FDRCreatedBy", fields: [createdBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  verifiedByUser User?              @relation("FDRVerifiedBy", fields: [verifiedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  assignedToUser User?              @relation("FDRAssignedTo", fields: [assignedTo], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  verificationResult VerificationResult?
+  parentFdr      FDR?               @relation("FDRRenewal", fields: [parentFdrId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  childFdrs      FDR[]              @relation("FDRRenewal")
+  flags          FDRFlag[]
+  documents      FDRDocument[]
+  jointHolders   JointHolder[]
+  lienDetails    LienDetails?
+  timeline       FDRTimelineEntry[]
+  verificationRequests VerificationRequest[]
+  releaseRequest ReleaseRequest?    @relation("FDRPrimaryReleaseRequest", fields: [releaseRequestId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  releaseRequests ReleaseRequest[]  @relation("ReleaseRequestFDR")
+
+  @@index([institutionId])
+  @@index([bankId])
+  @@index([fdrNumber])
+  @@index([status])
+  @@index([maturityDate])
+  @@index([parentFdrId])
+  @@index([createdBy])
+  @@index([assignedTo])
+  @@index([riskScore])
+  @@unique([institutionId, fdrNumber])
+}
+
+model FDRFlag {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  fdrId           String    @db.ObjectId
+  category        String
+  severity        String
+  message         String
+  details         Json?
+  isAutoGenerated Boolean   @default(true)
+  // Lifecycle: the institution answers an open flag, an officer closes it.
+  institutionResponse   String?
+  institutionRespondedAt DateTime?
+  resolvedAt      DateTime?
+  resolvedBy      String?   @db.ObjectId
+  resolutionNote  String?
+  createdAt       DateTime  @default(now())
+
+  fdr FDR @relation(fields: [fdrId], references: [id], onDelete: Cascade)
+
+  @@index([fdrId])
+  @@index([category])
+  @@index([severity])
+}
+
+model FDRDocument {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  fdrId      String   @db.ObjectId
+  type       String
+  fileName   String
+  fileUrl    String
+  fileSize   Int
+  mimeType   String
+  fileHash   String   @unique
+  ocrData    Json?
+  uploadedBy String   @db.ObjectId
+  uploadedAt DateTime @default(now())
+  version    Int      @default(1)
+
+  fdr FDR @relation(fields: [fdrId], references: [id], onDelete: Cascade)
+
+  @@index([fdrId])
+  @@index([type])
+}
+
+model JointHolder {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  fdrId      String   @db.ObjectId
+  name       String
+  pan        String
+  isAICTE    Boolean
+  percentage Float
+  createdAt  DateTime @default(now())
+
+  fdr FDR @relation(fields: [fdrId], references: [id], onDelete: Cascade)
+
+  @@index([fdrId])
+  @@index([pan])
+}
+
+model LienDetails {
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  fdrId          String    @unique @db.ObjectId
+  lienHolderName String
+  lienHolderPAN  String
+  lienAmount     Float
+  lienStartDate  DateTime
+  lienEndDate    DateTime?
+  lienDocumentId String?   @db.ObjectId
+  createdAt      DateTime  @default(now())
+
+  fdr FDR @relation(fields: [fdrId], references: [id], onDelete: Cascade)
+
+  @@index([lienHolderPAN])
+}
+
+model FDRTimelineEntry {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  fdrId       String   @db.ObjectId
+  status      String
+  actorId     String   @db.ObjectId
+  actorRole   String
+  actorName   String
+  action      String
+  description String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  fdr FDR @relation(fields: [fdrId], references: [id], onDelete: Cascade)
+
+  @@index([fdrId])
+  @@index([createdAt])
+  @@index([actorId])
+}
+
+model VerificationRequest {
+  id             String        @id @default(auto()) @map("_id") @db.ObjectId
+  fdrId          String        @db.ObjectId
+  tokenHash      String        @unique
+  tokenExpiry    DateTime
+  channel        String
+  status         String        @default("PENDING")
+  sentToEmail    String
+  sentAt         DateTime
+  completedAt    DateTime?
+  assuranceLevel String?
+  bankBranchId   String        @db.ObjectId
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  fdr          FDR                @relation(fields: [fdrId], references: [id], onDelete: Cascade)
+  bankBranch   BankBranch         @relation(fields: [bankBranchId], references: [id], onDelete: Cascade)
+  otp          OTPVerification?
+  result       VerificationResult?
+
+  @@index([fdrId])
+  @@index([status])
+  @@index([tokenExpiry])
+  @@index([bankBranchId])
+}
+
+model OTPVerification {
+  id                    String   @id @default(auto()) @map("_id") @db.ObjectId
+  verificationRequestId String   @unique @db.ObjectId
+  otpHash               String
+  attempts              Int      @default(0)
+  maxAttempts           Int      @default(5)
+  expiresAt             DateTime
+  verifiedAt            DateTime?
+  createdAt             DateTime @default(now())
+
+  verificationRequest VerificationRequest @relation(fields: [verificationRequestId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+model VerificationResult {
+  id                    String   @id @default(auto()) @map("_id") @db.ObjectId
+  verificationRequestId String   @unique @db.ObjectId
+  fdrId                 String   @unique @db.ObjectId
+  verifiedBy            String   @db.ObjectId
+  verifiedByRole        String
+  verifiedAt            DateTime
+  amountMatch           Boolean
+  issueDateMatch        Boolean
+  maturityDateMatch     Boolean
+  fdrNumberMatch        Boolean
+  jointHoldersMatch     Boolean
+  lienMatch             Boolean
+  confirmations         Json
+  remarks               String?
+  rejectionReason       String?
+  assuranceLevel        String
+  ipAddress             String?
+  userAgent             String?
+  createdAt             DateTime @default(now())
+
+  verificationRequest VerificationRequest @relation(fields: [verificationRequestId], references: [id], onDelete: Cascade)
+  fdr                 FDR                 @relation(fields: [fdrId], references: [id], onDelete: Cascade)
+
+  @@index([verifiedBy])
+}
+
+model ReleaseRequest {
+  id                     String    @id @default(auto()) @map("_id") @db.ObjectId
+  fdrId                  String    @unique @db.ObjectId
+  institutionId          String    @db.ObjectId
+  reason                 String
+  documents              Json
+  status                 String    @default("REQUESTED")
+  checklist              Json
+  requestedBy            String    @db.ObjectId
+  requestedAt            DateTime  @default(now())
+  recommendedBy          String?   @db.ObjectId
+  recommendedAt          DateTime?
+  recommendationRemarks  String?
+  approvedBy             String?   @db.ObjectId
+  approvedAt             DateTime?
+  approvalRemarks        String?
+  rejectedBy             String?   @db.ObjectId
+  rejectedAt             DateTime?
+  rejectionReason        String?
+  releasedAt             DateTime?
+  releaseCertificateUrl  String?
+  slaDeadline            DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  fdr              FDR   @relation("ReleaseRequestFDR", fields: [fdrId], references: [id], onDelete: Cascade)
+  fdrBackLinks     FDR[] @relation("FDRPrimaryReleaseRequest")
+  requestedByUser  User  @relation("ReleaseRequestedBy", fields: [requestedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  recommendedByUser User? @relation("ReleaseRecommendedBy", fields: [recommendedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  approvedByUser   User? @relation("ReleaseApprovedBy", fields: [approvedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  rejectedByUser   User? @relation("ReleaseRejectedBy", fields: [rejectedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([institutionId])
+  @@index([status])
+  @@index([requestedBy])
+  @@index([recommendedBy])
+  @@index([approvedBy])
+}
+
+model Notification {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  type      String
+  title     String
+  message   String
+  channels  String[]
+  metadata  Json?
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([readAt])
+}
+
+model AuditLog {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  actorId      String   @db.ObjectId
+  actorRole    String
+  actorName    String
+  action       String
+  entityType   String
+  entityId     String   @db.ObjectId
+  before       Json?
+  after        Json?
+  ipAddress    String?
+  userAgent    String?
+  hash         String
+  previousHash String?
+  createdAt    DateTime @default(now())
+
+  @@index([actorId])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([createdAt])
+  @@index([hash])
+}
+
+model RulesConfig {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  key         String   @unique
+  value       Json
+  description String?
+  updatedBy   String   @db.ObjectId
+  updatedAt   DateTime @updatedAt
+
+}
+
+model Webhook {
+  id          String            @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  url         String
+  events      String[]
+  secret      String
+  isActive    Boolean           @default(true)
+  createdBy   String            @db.ObjectId
+  deliveries  WebhookDelivery[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([isActive])
+}
+
+model WebhookDelivery {
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  webhookId      String    @db.ObjectId
+  event          String
+  payload        Json
+  responseStatus Int?
+  responseBody   String?
+  attempts       Int       @default(0)
+  nextRetryAt    DateTime?
+  succeededAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId])
+  @@index([event])
+  @@index([succeededAt])
+  @@index([nextRetryAt])
+}
+
+model APIKey {
+  id         String    @id @default(auto()) @map("_id") @db.ObjectId
+  name       String
+  keyPrefix  String
+  keyHash    String    @unique
+  scopes     String[]
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
+  isActive   Boolean   @default(true)
+  createdBy  String    @db.ObjectId
+  createdAt  DateTime  @default(now())
+
+  @@index([isActive])
+  @@index([createdBy])
+}

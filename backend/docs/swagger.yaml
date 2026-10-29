@@ -1,0 +1,725 @@
+openapi: 3.0.3
+info:
+  title: FDR Portal API
+  version: 1.0.0
+  description: |
+    Security Deposit / Fixed Deposit Receipt management API.
+
+    All endpoints are mounted under `/api/v1`. Responses use a consistent envelope:
+
+    ```json
+    { "success": true, "data": {}, "meta": { "timestamp": "...", "requestId": "..." } }
+    ```
+
+    Errors use:
+
+    ```json
+    { "success": false, "error": { "code": "SOME_CODE", "message": "...", "details": {} } }
+    ```
+
+    Authentication is bearer-token based. Obtain an access token from `POST /auth/login`
+    and send it as `Authorization: Bearer <token>`. Refresh tokens are issued as an
+    http-only cookie.
+  contact:
+    name: FDR Portal
+servers:
+  - url: /api/v1
+    description: Current deployment
+tags:
+  - name: System
+    description: Health and service metadata
+  - name: Auth
+    description: Authentication, sessions, and MFA
+  - name: FDRs
+    description: Fixed Deposit Receipt records
+  - name: Verification
+    description: Bank verification flow
+  - name: Officer
+    description: Review queue and case actions
+  - name: Release
+    description: Release requests for active liens
+  - name: Admin
+    description: System administration
+  - name: Directory
+    description: Institutions and bank branches
+  - name: Rules
+    description: Validations and thresholds
+  - name: Audit
+    description: Audit trail access
+  - name: Notifications
+    description: In-app and email notifications
+  - name: Webhooks
+    description: Outbound event delivery
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              example: Invalid request body
+            details:
+              type: object
+              nullable: true
+        meta:
+          type: object
+          properties:
+            timestamp:
+              type: string
+              format: date-time
+            requestId:
+              type: string
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          type: string
+          enum: [INSTITUTION, OFFICER, ADMIN, BANK_MANAGER, NODAL_OFFICER, AUDITOR]
+        institutionId:
+          type: string
+          nullable: true
+        bankId:
+          type: string
+          nullable: true
+        mfaEnabled:
+          type: boolean
+        status:
+          type: string
+          example: ACTIVE
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+        mfaCode:
+          type: string
+          description: Required only when the account has MFA enabled.
+
+    AuthTokens:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        accessToken:
+          type: string
+        accessTokenExpiry:
+          type: string
+          format: date-time
+
+    JointHolder:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        relationship:
+          type: string
+        pan:
+          type: string
+
+    CreateFDRRequest:
+      type: object
+      required: [fdrNumber, ifscCode, amount, issueDate, maturityDate]
+      properties:
+        fdrNumber:
+          type: string
+          example: FDR-2026-001234
+        ifscCode:
+          type: string
+          example: SBIN0001234
+        amount:
+          type: number
+          format: double
+          example: 5000000
+        issueDate:
+          type: string
+          format: date
+        maturityDate:
+          type: string
+          format: date
+        interestRate:
+          type: number
+          format: double
+          example: 7.25
+        jointHolders:
+          type: array
+          items:
+            $ref: '#/components/schemas/JointHolder'
+
+    FDR:
+      type: object
+      properties:
+        id:
+          type: string
+        fdrNumber:
+          type: string
+        institutionId:
+          type: string
+        bankName:
+          type: string
+        branchName:
+          type: string
+        ifscCode:
+          type: string
+        amount:
+          type: number
+        issueDate:
+          type: string
+          format: date-time
+        maturityDate:
+          type: string
+          format: date-time
+        interestRate:
+          type: number
+          nullable: true
+        status:
+          type: string
+          example: DRAFT
+        riskScore:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: Service health
+      security: []
+      responses:
+        '200':
+          description: Current health of the service and its dependencies
+        '503':
+          description: One or more dependencies are unavailable
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Sign in
+      description: |
+        Returns an access token and sets a refresh token cookie. If the account has MFA
+        enabled, the response contains `mfaRequired: true` and no token; call again with
+        `mfaCode`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authenticated, or an MFA challenge
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    oneOf:
+                      - $ref: '#/components/schemas/AuthTokens'
+                      - type: object
+                        properties:
+                          mfaRequired:
+                            type: boolean
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password, role]
+              properties:
+                name:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  format: password
+                role:
+                  type: string
+                  enum: [INSTITUTION, OFFICER, ADMIN, BANK_MANAGER, NODAL_OFFICER, AUDITOR]
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/AuthTokens'
+        '409':
+          description: Email already registered
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh the access token
+      description: Reads the refresh token from the http-only cookie, or from the request body.
+      security: []
+      responses:
+        '200':
+          description: New access token issued
+        '401':
+          description: Refresh token missing, expired, or revoked
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Sign out the current session
+      responses:
+        '200':
+          description: Session revoked and cookie cleared
+
+  /auth/logout-all:
+    post:
+      tags: [Auth]
+      summary: Sign out every session for the current user
+      responses:
+        '200':
+          description: All refresh tokens revoked
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user profile
+      responses:
+        '200':
+          description: The authenticated user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      user:
+                        $ref: '#/components/schemas/User'
+        '401':
+          description: Not authenticated
+
+  /auth/change-password:
+    post:
+      tags: [Auth]
+      summary: Change the current user's password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword:
+                  type: string
+                  format: password
+                newPassword:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: Password updated
+        '401':
+          description: Current password incorrect
+
+  /fdrs:
+    get:
+      tags: [FDRs]
+      summary: List FDRs
+      description: Scoped to the caller's institution, bank, or review assignment.
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+        - in: query
+          name: search
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A page of FDR records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FDR'
+        '401':
+          description: Not authenticated
+    post:
+      tags: [FDRs]
+      summary: Create a draft FDR
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFDRRequest'
+      responses:
+        '201':
+          description: FDR created in DRAFT status
+        '409':
+          description: Duplicate FDR number for this institution
+
+  /fdrs/{id}:
+    get:
+      tags: [FDRs]
+      summary: Get one FDR
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The FDR with related records
+        '404':
+          description: Not found
+    patch:
+      tags: [FDRs]
+      summary: Update a draft FDR
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Updated
+        '409':
+          description: The FDR is no longer editable
+
+  /fdrs/{id}/submit:
+    post:
+      tags: [FDRs]
+      summary: Submit a draft FDR for verification
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Submitted and moved into the verification flow
+
+  /fdrs/{id}/timeline:
+    get:
+      tags: [FDRs]
+      summary: Case timeline
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Ordered list of status changes and actions
+
+  /fdrs/{id}/receipt:
+    get:
+      tags: [FDRs]
+      summary: Download the FDR receipt
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Receipt document
+        '404':
+          description: No receipt attached
+
+  /fdrs/{id}/renew:
+    post:
+      tags: [FDRs]
+      summary: Record a renewal
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Renewal recorded
+
+  /fdrs/{id}/release-requests:
+    post:
+      tags: [Release]
+      summary: Request release of a lien
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Release request created
+        '409':
+          description: A request already exists for this FDR
+
+  /verification:
+    get:
+      tags: [Verification]
+      summary: Bank verification requests
+      responses:
+        '200':
+          description: Requests addressed to the caller's bank
+
+  /officer/queue:
+    get:
+      tags: [Officer]
+      summary: Review queue
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Cases awaiting review, ordered by risk and age
+
+  /officer/fdrs/{id}/verify:
+    post:
+      tags: [Officer]
+      summary: Approve a verified FDR
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: FDR approved
+
+  /officer/fdrs/{id}/flag:
+    post:
+      tags: [Officer]
+      summary: Flag an FDR
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: FDR flagged with a category and note
+
+  /officer/expiry:
+    get:
+      tags: [Officer]
+      summary: Deposits approaching maturity
+      parameters:
+        - in: query
+          name: days
+          schema:
+            type: integer
+            default: 90
+      responses:
+        '200':
+          description: FDRs maturing within the requested window
+
+  /officer/search:
+    get:
+      tags: [Officer]
+      summary: Search FDRs
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Matching FDRs
+
+  /release/requests:
+    get:
+      tags: [Release]
+      summary: List release requests
+      responses:
+        '200':
+          description: Requests visible to the caller
+
+  /release/requests/{id}/approve:
+    post:
+      tags: [Release]
+      summary: Approve a release request
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Release approved
+
+  /admin/overview:
+    get:
+      tags: [Admin]
+      summary: System overview
+      responses:
+        '200':
+          description: Aggregate counts across the portal
+
+  /admin/analytics:
+    get:
+      tags: [Admin]
+      summary: Portfolio analytics
+      responses:
+        '200':
+          description: Time-series and distribution metrics
+
+  /admin/rules:
+    get:
+      tags: [Rules]
+      summary: Current rules configuration
+      responses:
+        '200':
+          description: Rules and thresholds
+    patch:
+      tags: [Rules]
+      summary: Update rules
+      responses:
+        '200':
+          description: Updated configuration
+
+  /admin/audit:
+    get:
+      tags: [Audit]
+      summary: Audit log
+      parameters:
+        - in: query
+          name: entity
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+      responses:
+        '200':
+          description: Audit entries
+
+  /directory:
+    get:
+      tags: [Directory]
+      summary: Bank branch directory
+      responses:
+        '200':
+          description: Branches available for FDR issuance
+
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: Current user's notifications
+      responses:
+        '200':
+          description: Notifications, most recent first
+
+  /webhooks:
+    get:
+      tags: [Webhooks]
+      summary: Registered webhook endpoints
+      responses:
+        '200':
+          description: Webhook registrations
+    post:
+      tags: [Webhooks]
+      summary: Register a webhook
+      responses:
+        '201':
+          description: Webhook created
+
+security:
+  - bearerAuth: []

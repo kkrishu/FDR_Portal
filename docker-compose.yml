@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  # Mailhog for email testing (local development only)
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: fdr-portal-mailhog
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - fdr-network
+    restart: unless-stopped
+
+networks:
+  fdr-network:
+    driver: bridge
