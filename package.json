@@ -1,0 +1,53 @@
+{
+  "name": "fdr-portal",
+  "version": "1.0.0",
+  "description": "FDR Portal - Security Deposit/FDR Management System for AICTE",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "client",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "pnpm --filter=shared build && (pnpm --filter=backend dev & pnpm --filter=client dev)",
+    "build": "pnpm --filter=shared build && pnpm --filter=backend build && pnpm --filter=client build",
+    "lint": "pnpm --filter=backend lint && pnpm --filter=client lint && pnpm --filter=shared lint",
+    "lint:fix": "pnpm --filter=backend lint:fix && pnpm --filter=client lint:fix && pnpm --filter=shared lint:fix",
+    "typecheck": "pnpm --filter=backend typecheck && pnpm --filter=client typecheck && pnpm --filter=shared typecheck",
+    "test": "pnpm --filter=backend test && pnpm --filter=client test && pnpm --filter=shared test",
+    "test:watch": "pnpm --filter=backend test:watch & pnpm --filter=client test:watch & pnpm --filter=shared test:watch",
+    "prepare": "echo 'No husky needed'",
+    "db:generate": "pnpm --filter=backend db:generate",
+    "db:push": "pnpm --filter=backend db:push",
+    "db:studio": "pnpm --filter=backend db:studio",
+    "db:seed": "pnpm --filter=backend db:seed",
+    "docker:build": "docker compose build",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f",
+    "clean": "pnpm --filter=backend clean && pnpm --filter=client clean && pnpm --filter=shared clean && rm -rf node_modules",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md,yaml,yml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,json,md,yaml,yml}\"",
+    "db:setup": "pnpm --filter=backend db:generate && pnpm --filter=backend db:push",
+    "db:validate": "pnpm --filter=backend db:validate"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "eslint": "^9.15.0",
+    "prettier": "^3.4.1",
+    "typescript": "^5.7.2"
+  },
+  "pnpm": {
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "react",
+        "react-dom"
+      ]
+    }
+  }
+}
