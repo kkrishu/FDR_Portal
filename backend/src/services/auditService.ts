@@ -10,6 +10,38 @@
 import { createHash } from 'crypto';
 import { prisma } from '../lib/prisma';
 import logger from '../lib/logger';
+import geoip from 'geoip-lite';
+
+/**
+ * Enrich IP address with geolocation data
+ */
+function enrichIpAddress(ipAddress?: string | null): {
+  country?: string;
+  city?: string;
+  region?: string;
+  asn?: string;
+  isp?: string;
+} | null {
+  if (!ipAddress || ipAddress === '::1' || ipAddress === '127.0.0.1' || ipAddress.startsWith('192.168.') || ipAddress.startsWith('10.') || ipAddress.startsWith('172.')) {
+    return null;
+  }
+  
+  try {
+    const geo = geoip.lookup(ipAddress);
+    if (geo) {
+      return {
+        country: geo.country,
+        city: geo.city,
+        region: geo.region,
+        // Note: geoip-lite doesn't provide ASN/ISP by default
+        // You'd need maxmind for that - keeping fields for future enhancement
+      };
+    }
+  } catch (error) {
+    logger.warn({ err: error, ip: ipAddress }, 'Failed to lookup geolocation');
+  }
+  return null;
+}
 
 export interface AuditInput {
   actorId: string;
@@ -91,6 +123,9 @@ class AuditService {
       });
       previousHash = tip?.hash ?? null;
 
+      // Enrich with geolocation
+      const geo = enrichIpAddress(input.ipAddress);
+
       const hash = computeAuditHash(previousHash, { ...input, createdAt });
 
       await prisma.auditLog.create({
@@ -105,6 +140,9 @@ class AuditService {
           after: (input.after ?? undefined) as any,
           ipAddress: input.ipAddress,
           userAgent: input.userAgent,
+          country: geo?.country,
+          city: geo?.city,
+          region: geo?.region,
           hash,
           previousHash,
           createdAt,

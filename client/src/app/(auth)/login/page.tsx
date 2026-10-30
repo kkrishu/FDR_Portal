@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useForm } from 'react-hook-form';
@@ -68,9 +69,16 @@ const ROLE_OPTIONS = [
 
 function LoginView() {
   const router = useRouter();
-  const { setAuth } = useAuthStore();
-
+  const { setAuth, isAuthenticated } = useAuthStore();
   const searchParams = useSearchParams();
+
+  // Redirect to dashboard if already authenticated
+  React.useEffect(() => {
+    if (isAuthenticated) {
+      router.push('/dashboard');
+    }
+  }, [isAuthenticated, router]);
+
   const [tab, setTab] = useState<'login' | 'register'>(
     searchParams.get('tab') === 'register' ? 'register' : 'login'
   );
@@ -265,7 +273,7 @@ function LoginView() {
   };
 
   return (
-    <div className="bg-background flex min-h-screen">
+    <div className="bg-background flex min-h-screen overflow-hidden">
       {/* Brand panel — hidden on small screens where it would crowd the form */}
       <aside className="border-border/60 bg-muted/30 relative hidden w-[45%] max-w-[560px] flex-col justify-between overflow-hidden border-r p-10 lg:flex">
         <div
@@ -310,8 +318,8 @@ function LoginView() {
       </aside>
 
       {/* Form panel */}
-      <main className="flex flex-1 items-center justify-center px-5 py-12 sm:px-8">
-        <div className="w-full max-w-[400px]">
+      <main className="flex min-h-0 flex-1 items-center justify-center px-5 py-12 sm:px-8">
+        <div className="max-h-[calc(100vh-3rem)] w-full max-w-[400px] overflow-y-auto">
           <div className="mb-8 flex items-center justify-between lg:hidden">
             <Link href="/" aria-label="FDR Portal home">
               <Logo />

@@ -20,6 +20,7 @@ import { connectRedis, disconnectRedis } from './lib/redis';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { requestLogger } from './middleware/requestLogger';
 import { authMiddleware } from './middleware/auth';
+import { csrfProtection, exposeCsrfToken } from './middleware/csrf';
 import { PrismaClient } from '@prisma/client';
 
 // Initialize Express app
@@ -51,6 +52,9 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Cookie parser
 app.use(cookieParser());
 
+// CSRF protection - expose token to client
+app.use(exposeCsrfToken);
+
 // Request logging
 app.use(requestLogger);
 
@@ -69,6 +73,9 @@ app.use('/api/', limiter);
 // Stricter rate limiting for auth endpoints
 const authLimiter = rateLimit(authRateLimitOptions);
 app.use('/api/v1/auth/', authLimiter);
+
+// CSRF protection for all API routes (except auth which has its own protection)
+app.use('/api/', csrfProtection);
 
 // ============================================
 // Service Index

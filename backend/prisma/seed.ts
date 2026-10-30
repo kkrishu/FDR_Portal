@@ -2,12 +2,19 @@
  * Seed script — a working demo dataset.
  *
  * Run with: pnpm --filter=backend db:seed
+ * Run with cleanup: pnpm --filter=backend db:seed --clean
+ * Skip demo users: pnpm --filter=backend db:seed --no-demo-users
  *
  * Everything a dashboard, list or detail page renders comes from here: FDRs
  * across every workflow status, their joint holders, lien details, documents,
  * timeline entries, verification results, release requests, notifications, and
  * a hash-chained audit log. Records are upserted by natural key, so re-running
  * updates rather than duplicates.
+ *
+ * Environment variables:
+ * - SEED_DEMO_USERS=true|false (default: true) - Include demo user accounts
+ * - SEED_DEMO_DATA=true|false (default: true) - Include demo FDRs, notifications, etc.
+ * - SEED_CLEAN=true|false (default: false) - Remove all data before seeding
  */
 
 import { PrismaClient } from '@prisma/client';
@@ -21,6 +28,12 @@ const prisma = new PrismaClient();
 const PASSWORD = 'Password@123';
 const SALT_ROUNDS = 12;
 const DAY = 24 * 60 * 60 * 1000;
+
+// Parse CLI arguments
+const args = process.argv.slice(2);
+const shouldClean = args.includes('--clean') || process.env.SEED_CLEAN === 'true';
+const includeDemoUsers = !args.includes('--no-demo-users') && process.env.SEED_DEMO_USERS !== 'false';
+const includeDemoData = process.env.SEED_DEMO_DATA !== 'false';
 
 // ============================================
 // Reference data
@@ -598,6 +611,34 @@ function panFor(name: string): string {
 async function main() {
   console.log('Seeding demo data…\n');
 
+  // Clean up existing data if requested
+  if (shouldClean) {
+    console.log('Cleaning existing data…');
+    await prisma.auditLog.deleteMany({});
+    await prisma.webhookDelivery.deleteMany({});
+    await prisma.webhook.deleteMany({});
+    await prisma.notification.deleteMany({});
+    await prisma.releaseRequest.deleteMany({});
+    await prisma.verificationResult.deleteMany({});
+    await prisma.oTPVerification.deleteMany({});
+    await prisma.verificationRequest.deleteMany({});
+    await prisma.fDRTimelineEntry.deleteMany({});
+    await prisma.lienDetails.deleteMany({});
+    await prisma.jointHolder.deleteMany({});
+    await prisma.fDRDocument.deleteMany({});
+    await prisma.fDRFlag.deleteMany({});
+    await prisma.fDR.deleteMany({});
+    await prisma.passwordResetToken.deleteMany({});
+    await prisma.refreshToken.deleteMany({});
+    await prisma.user.deleteMany({});
+    await prisma.bankBranch.deleteMany({});
+    await prisma.bank.deleteMany({});
+    await prisma.institution.deleteMany({});
+    await prisma.rulesConfig.deleteMany({});
+    await prisma.aPIKey.deleteMany({});
+    console.log('  Cleaned all existing data\n');
+  }
+
   // The same thresholds the API reads, defined before the FDR loop so the
   // risk assessor and the rules row cannot disagree.
   const rulesValue = {
@@ -660,47 +701,55 @@ async function main() {
     console.log(`  bank         ${bank.name} (${branches.length} branch${branches.length === 1 ? '' : 'es'})`);
   }
 
-  // --- Users ---
+  // --- Users (only if demo users enabled) ---
   const userIds = new Map<string, string>();
-  for (const user of users) {
-    const { label, institutionCode, bankCode, ...data } = user as typeof user & {
-      institutionCode?: string;
-      bankCode?: string;
-    };
-    const payload = {
-      name: data.name,
-      role: data.role,
-      institutionId: institutionCode ? institutionIds.get(institutionCode)! : null,
-      bankId: bankCode ? bankIds.get(bankCode)! : null,
-      status: 'ACTIVE',
-      passwordHash,
-    };
-    const record = await prisma.user.upsert({
-      where: { email: data.email },
-      update: payload,
-      create: { ...payload, email: data.email, mfaEnabled: false },
-      select: { id: true },
-    });
-    userIds.set(data.email, record.id);
-    console.log(`  user         ${data.email.padEnd(34)} ${data.role.padEnd(14)} ${label}`);
+  
+  if (includeDemoUsers) {
+    for (const user of users) {
+      const { label, institutionCode, bankCode, ...data } = user as typeof user & {
+        institutionCode?: string;
+        bankCode?: string;
+      };
+      const payload = {
+        name: data.name,
+        role: data.role,
+        institutionId: institutionCode ? institutionIds.get(institutionCode)! : null,
+        bankId: bankCode ? bankIds.get(bankCode)! : null,
+        status: 'ACTIVE',
+        passwordHash,
+      };
+      const record = await prisma.user.upsert({
+        where: { email: data.email },
+        update: payload,
+        create: { ...payload, email: data.email, mfaEnabled: false },
+        select: { id: true },
+      });
+      userIds.set(data.email, record.id);
+      console.log(`  user         ${data.email.padEnd(34)} ${data.role.padEnd(14)} ${label}`);
+    }
+  } else {
+    console.log('  users        skipped (SEED_DEMO_USERS=false or --no-demo-users)');
   }
 
-  const adminId = userIds.get('admin@fdrportal.local')!;
-  const officerId = userIds.get('officer@fdrportal.local')!;
-  const officer2Id = userIds.get('officer2@fdrportal.local')!;
+  const adminId = includeDemoUsers ? userIds.get('admin@fdrportal.local')! : null;
+  const officerId = includeDemoUsers ? userIds.get('officer@fdrportal.local')! : null;
+  const officer2Id = includeDemoUsers ? userIds.get('officer2@fdrportal.local')! : null;
 
-  // Wire the nodal officer relation so institution-side notifications resolve.
-  await prisma.institution.update({
-    where: { code: 'AICTE-INST-001' },
-    data: { nodalOfficerId: userIds.get('nodal@fdrportal.local')! },
-  });
+  // Wire the nodal officer relation so institution-side notifications resolve (only if demo users exist)
+  if (includeDemoUsers) {
+    await prisma.institution.update({
+      where: { code: 'AICTE-INST-001' },
+      data: { nodalOfficerId: userIds.get('nodal@fdrportal.local')! },
+    });
+  }
 
-  // --- FDRs and everything hanging off them ---
-  console.log('');
+  // --- FDRs and everything hanging off them (only if demo data enabled) ---
   let createdFdrs = 0;
 
-  for (const plan of fdrPlans) {
-    const institutionId = institutionIds.get(plan.institution)!;
+  if (includeDemoData) {
+console.log('');
+    for (const plan of fdrPlans) {
+      const institutionId = institutionIds.get(plan.institution)!;
     const createdBy = [...userIds.entries()].find(
       ([email]) => email.startsWith('institution') && email.includes(plan.institution.slice(-1))
     )?.[1] ?? userIds.get('institution@fdrportal.local')!;
@@ -1039,12 +1088,12 @@ async function main() {
     }
 
     createdFdrs += 1;
-  }
-  console.log(`  fdrs         ${createdFdrs} records across all workflow states`);
+    }
+    console.log(`  fdrs         ${createdFdrs} records across all workflow states`);
 
-  // --- Notifications for every user ---
-  await prisma.notification.deleteMany({});
-  const notificationPlans = [
+    // --- Notifications for every user ---
+    await prisma.notification.deleteMany({});
+    const notificationPlans = [
     {
       email: 'institution@fdrportal.local',
       items: [
@@ -1204,90 +1253,94 @@ async function main() {
   }
   console.log(`  notifs       ${notificationCount} notifications`);
 
-  // --- Rules configuration ---
-  await prisma.rulesConfig.upsert({
-    where: { key: 'default' },
-    update: { value: rulesValue, description: 'Live workflow thresholds', updatedBy: adminId },
-    create: {
-      key: 'default',
-      value: rulesValue,
-      description: 'Live workflow thresholds',
-      updatedBy: adminId,
-    },
-  });
-  console.log('  rules        default configuration');
-
-  // --- Audit log with a real hash chain ---
-  await prisma.auditLog.deleteMany({});
-
-  const auditSeeds = [
-    { action: 'USER_LOGIN', entityType: 'User', entityId: adminId, actor: 'admin@fdrportal.local', daysAgo: 21 },
-    { action: 'INSTITUTION_CREATED', entityType: 'Institution', entityId: institutionIds.get('AICTE-INST-003')!, actor: 'admin@fdrportal.local', daysAgo: 20 },
-    { action: 'BANK_BRANCH_VERIFIED', entityType: 'BankBranch', entityId: branchIds.get('ICIC0000789')!, actor: 'admin@fdrportal.local', daysAgo: 18 },
-    { action: 'FDR_SUBMITTED', entityType: 'FDR', entityId: 'seed-fdr-001', actor: 'institution@fdrportal.local', daysAgo: 14 },
-    { action: 'FDR_VERIFIED', entityType: 'FDR', entityId: 'seed-fdr-001', actor: 'officer@fdrportal.local', daysAgo: 12 },
-    { action: 'RELEASE_REQUESTED', entityType: 'ReleaseRequest', entityId: 'seed-release-001', actor: 'institution@fdrportal.local', daysAgo: 8 },
-    { action: 'RELEASE_RECOMMENDED', entityType: 'ReleaseRequest', entityId: 'seed-release-001', actor: 'officer@fdrportal.local', daysAgo: 6 },
-    { action: 'RELEASE_APPROVED', entityType: 'ReleaseRequest', entityId: 'seed-release-001', actor: 'admin@fdrportal.local', daysAgo: 5 },
-    { action: 'RULES_UPDATED', entityType: 'RulesConfig', entityId: 'default', actor: 'admin@fdrportal.local', daysAgo: 3 },
-    { action: 'USER_STATUS_CHANGED', entityType: 'User', entityId: officer2Id, actor: 'admin@fdrportal.local', daysAgo: 2 },
-  ];
-
-  let previousHash: string | null = null;
-  for (const entry of auditSeeds) {
-    const createdAt = daysFromNow(-entry.daysAgo);
-    const actorId = userIds.get(entry.actor) ?? adminId;
-    const actor = users.find((u) => u.email === entry.actor);
-
-    // entityId is an ObjectId in the schema, so the placeholder entries have to
-    // be normalised before hashing — the stored value is what gets re-verified.
-    const entityId = /^[0-9a-f]{24}$/.test(entry.entityId)
-      ? entry.entityId
-      : '000000000000000000000001';
-
-    const payload = {
-      actorId,
-      actorRole: actor?.role ?? 'ADMIN',
-      actorName: actor?.name ?? 'System',
-      action: entry.action,
-      entityType: entry.entityType,
-      entityId,
-      before: undefined,
-      after: { seeded: true, action: entry.action },
-      ipAddress: '127.0.0.1',
-      userAgent: 'seed-script',
-      createdAt,
-    };
-
-    // Hash through the same function the service uses, so `/audit/verify`
-    // accepts seeded history instead of reporting a false tamper.
-    const rowHash = computeAuditHash(previousHash, payload);
-
-    await prisma.auditLog.create({
-      data: { ...payload, hash: rowHash, previousHash },
-    });
-
-    previousHash = rowHash;
-  }
-  console.log(`  audit        ${auditSeeds.length} hash-chained entries`);
-
-  // --- Webhook for the admin console ---
-  const existingWebhook = await prisma.webhook.findFirst({ where: { name: 'AICTE reporting endpoint' } });
-  if (!existingWebhook) {
-    await prisma.webhook.create({
-      data: {
-        name: 'AICTE reporting endpoint',
-        url: 'https://example.gov.in/hooks/fdr-events',
-        events: ['fdr.submitted', 'fdr.verified', 'release.approved'],
-        secret: hash('demo-webhook-secret').slice(0, 32),
-        isActive: true,
-        createdBy: adminId,
+  // --- Rules configuration (only if demo data enabled) ---
+  if (includeDemoData) {
+    await prisma.rulesConfig.upsert({
+      where: { key: 'default' },
+      update: { value: rulesValue, description: 'Live workflow thresholds', updatedBy: adminId },
+      create: {
+        key: 'default',
+        value: rulesValue,
+        description: 'Live workflow thresholds',
+        updatedBy: adminId,
       },
     });
-    console.log('  webhook      AICTE reporting endpoint');
-  }
+    console.log('  rules        default configuration');
 
-  console.log(`\nDone. All accounts use the password: ${PASSWORD}\n`);
+    // --- Audit log with a real hash chain ---
+    await prisma.auditLog.deleteMany({});
+
+    const auditSeeds = [
+      { action: 'USER_LOGIN', entityType: 'User', entityId: adminId, actor: 'admin@fdrportal.local', daysAgo: 21 },
+      { action: 'INSTITUTION_CREATED', entityType: 'Institution', entityId: institutionIds.get('AICTE-INST-003')!, actor: 'admin@fdrportal.local', daysAgo: 20 },
+      { action: 'BANK_BRANCH_VERIFIED', entityType: 'BankBranch', entityId: branchIds.get('ICIC0000789')!, actor: 'admin@fdrportal.local', daysAgo: 18 },
+      { action: 'FDR_SUBMITTED', entityType: 'FDR', entityId: 'seed-fdr-001', actor: 'institution@fdrportal.local', daysAgo: 14 },
+      { action: 'FDR_VERIFIED', entityType: 'FDR', entityId: 'seed-fdr-001', actor: 'officer@fdrportal.local', daysAgo: 12 },
+      { action: 'RELEASE_REQUESTED', entityType: 'ReleaseRequest', entityId: 'seed-release-001', actor: 'institution@fdrportal.local', daysAgo: 8 },
+      { action: 'RELEASE_RECOMMENDED', entityType: 'ReleaseRequest', entityId: 'seed-release-001', actor: 'officer@fdrportal.local', daysAgo: 6 },
+      { action: 'RELEASE_APPROVED', entityType: 'ReleaseRequest', entityId: 'seed-release-001', actor: 'admin@fdrportal.local', daysAgo: 5 },
+      { action: 'RULES_UPDATED', entityType: 'RulesConfig', entityId: 'default', actor: 'admin@fdrportal.local', daysAgo: 3 },
+      { action: 'USER_STATUS_CHANGED', entityType: 'User', entityId: officer2Id, actor: 'admin@fdrportal.local', daysAgo: 2 },
+    ];
+
+    let previousHash: string | null = null;
+    for (const entry of auditSeeds) {
+      const createdAt = daysFromNow(-entry.daysAgo);
+      const actorId = userIds.get(entry.actor) ?? adminId;
+      const actor = users.find((u) => u.email === entry.actor);
+
+      // entityId is an ObjectId in the schema, so the placeholder entries have to
+      // be normalised before hashing — the stored value is what gets re-verified.
+      const entityId = /^[0-9a-f]{24}$/.test(entry.entityId)
+        ? entry.entityId
+        : '000000000000000000000001';
+
+      const payload = {
+        actorId,
+        actorRole: actor?.role ?? 'ADMIN',
+        actorName: actor?.name ?? 'System',
+        action: entry.action,
+        entityType: entry.entityType,
+        entityId,
+        before: undefined,
+        after: { seeded: true, action: entry.action },
+        ipAddress: '127.0.0.1',
+        userAgent: 'seed-script',
+        createdAt,
+      };
+
+      // Hash through the same function the service uses, so `/audit/verify`
+      // accepts seeded history instead of reporting a false tamper.
+      const rowHash = computeAuditHash(previousHash, payload);
+
+      await prisma.auditLog.create({
+        data: { ...payload, hash: rowHash, previousHash },
+      });
+
+      previousHash = rowHash;
+    }
+    console.log(`  audit        ${auditSeeds.length} hash-chained entries`);
+
+    // --- Webhook for the admin console ---
+    const existingWebhook = await prisma.webhook.findFirst({ where: { name: 'AICTE reporting endpoint' } });
+    if (!existingWebhook) {
+      await prisma.webhook.create({
+        data: {
+          name: 'AICTE reporting endpoint',
+          url: 'https://example.gov.in/hooks/fdr-events',
+          events: ['fdr.submitted', 'fdr.verified', 'release.approved'],
+          secret: hash('demo-webhook-secret').slice(0, 32),
+          isActive: true,
+          createdBy: adminId,
+        },
+      });
+      console.log('  webhook      AICTE reporting endpoint');
+    }
+
+    console.log(`\nDone. All accounts use the password: ${PASSWORD}\n`);
+  } else {
+    console.log('\nDone. Demo data skipped (SEED_DEMO_DATA=false).\n');
+  }
 }
 
 main()

@@ -16,24 +16,24 @@ datasource db {
 // ============================================
 
 model User {
-  id             String    @id @default(auto()) @map("_id") @db.ObjectId
-  email          String    @unique
-  passwordHash   String
-  name           String
-  role           String
-  status         String    @default("ACTIVE")
-  institutionId  String?   @db.ObjectId
-  bankId         String?   @db.ObjectId
-  mfaEnabled     Boolean   @default(false)
-  mfaSecret      String?
-  mfaBackupCodes String[]
-  avatarUrl      String?
-  lastLoginAt    DateTime?
-  refreshTokens  RefreshToken[]
-  notifications  Notification[]
+  id                  String               @id @default(auto()) @map("_id") @db.ObjectId
+  email               String               @unique
+  passwordHash        String
+  name                String
+  role                String
+  status              String               @default("ACTIVE")
+  institutionId       String?              @db.ObjectId
+  bankId              String?              @db.ObjectId
+  mfaEnabled          Boolean              @default(false)
+  mfaSecret           String?
+  mfaBackupCodes      String[]
+  avatarUrl           String?
+  lastLoginAt         DateTime?
+  refreshTokens       RefreshToken[]
+  notifications       Notification[]
   passwordResetTokens PasswordResetToken[]
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
 
   institution              Institution?     @relation("UserInstitution", fields: [institutionId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   bank                     Bank?            @relation("UserBank", fields: [bankId], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -45,6 +45,7 @@ model User {
   recommendedReleaseReqs   ReleaseRequest[] @relation("ReleaseRecommendedBy")
   approvedReleaseRequests  ReleaseRequest[] @relation("ReleaseApprovedBy")
   rejectedReleaseRequests  ReleaseRequest[] @relation("ReleaseRejectedBy")
+  UserSession              UserSession[]
 
   @@index([institutionId])
   @@index([bankId])
@@ -108,39 +109,39 @@ model Institution {
 }
 
 model Bank {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  id        String       @id @default(auto()) @map("_id") @db.ObjectId
   name      String
-  code      String   @unique
+  code      String       @unique
   logoUrl   String?
-  isActive  Boolean  @default(true)
+  isActive  Boolean      @default(true)
   branches  BankBranch[]
   users     User[]       @relation("UserBank")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
 
   @@index([isActive])
 }
 
 model BankBranch {
-  id                     String                @id @default(auto()) @map("_id") @db.ObjectId
-  bankId                 String                @db.ObjectId
-  ifscCode               String                @unique
-  branchName             String
-  address                String
-  city                   String
-  district               String?
-  state                  String
-  pincode                String
-  contactPhone           String?
-  contactEmail           String?
-  contactPerson          String?
-  contactDesignation     String?
-  isVerified             Boolean               @default(false)
-  verifiedAt             DateTime?
-  verificationExpiry     DateTime?
-  verificationRequests   VerificationRequest[]
-  createdAt              DateTime              @default(now())
-  updatedAt              DateTime              @updatedAt
+  id                   String                @id @default(auto()) @map("_id") @db.ObjectId
+  bankId               String                @db.ObjectId
+  ifscCode             String                @unique
+  branchName           String
+  address              String
+  city                 String
+  district             String?
+  state                String
+  pincode              String
+  contactPhone         String?
+  contactEmail         String?
+  contactPerson        String?
+  contactDesignation   String?
+  isVerified           Boolean               @default(false)
+  verifiedAt           DateTime?
+  verificationExpiry   DateTime?
+  verificationRequests VerificationRequest[]
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
 
   bank Bank @relation(fields: [bankId], references: [id], onDelete: Cascade)
 
@@ -181,22 +182,23 @@ model FDR {
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 
-  institution    Institution        @relation("InstitutionFDRs", fields: [institutionId], references: [id], onDelete: Cascade)
-  createdByUser  User               @relation("FDRCreatedBy", fields: [createdBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  verifiedByUser User?              @relation("FDRVerifiedBy", fields: [verifiedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  assignedToUser User?              @relation("FDRAssignedTo", fields: [assignedTo], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  verificationResult VerificationResult?
-  parentFdr      FDR?               @relation("FDRRenewal", fields: [parentFdrId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  childFdrs      FDR[]              @relation("FDRRenewal")
-  flags          FDRFlag[]
-  documents      FDRDocument[]
-  jointHolders   JointHolder[]
-  lienDetails    LienDetails?
-  timeline       FDRTimelineEntry[]
+  institution          Institution           @relation("InstitutionFDRs", fields: [institutionId], references: [id], onDelete: Cascade)
+  createdByUser        User                  @relation("FDRCreatedBy", fields: [createdBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  verifiedByUser       User?                 @relation("FDRVerifiedBy", fields: [verifiedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  assignedToUser       User?                 @relation("FDRAssignedTo", fields: [assignedTo], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  verificationResult   VerificationResult?
+  parentFdr            FDR?                  @relation("FDRRenewal", fields: [parentFdrId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  childFdrs            FDR[]                 @relation("FDRRenewal")
+  flags                FDRFlag[]
+  documents            FDRDocument[]
+  jointHolders         JointHolder[]
+  lienDetails          LienDetails?
+  timeline             FDRTimelineEntry[]
   verificationRequests VerificationRequest[]
-  releaseRequest ReleaseRequest?    @relation("FDRPrimaryReleaseRequest", fields: [releaseRequestId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  releaseRequests ReleaseRequest[]  @relation("ReleaseRequestFDR")
+  releaseRequest       ReleaseRequest?       @relation("FDRPrimaryReleaseRequest", fields: [releaseRequestId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  releaseRequests      ReleaseRequest[]      @relation("ReleaseRequestFDR")
 
+  @@unique([institutionId, fdrNumber])
   @@index([institutionId])
   @@index([bankId])
   @@index([fdrNumber])
@@ -206,24 +208,23 @@ model FDR {
   @@index([createdBy])
   @@index([assignedTo])
   @@index([riskScore])
-  @@unique([institutionId, fdrNumber])
 }
 
 model FDRFlag {
-  id              String    @id @default(auto()) @map("_id") @db.ObjectId
-  fdrId           String    @db.ObjectId
-  category        String
-  severity        String
-  message         String
-  details         Json?
-  isAutoGenerated Boolean   @default(true)
+  id                     String    @id @default(auto()) @map("_id") @db.ObjectId
+  fdrId                  String    @db.ObjectId
+  category               String
+  severity               String
+  message                String
+  details                Json?
+  isAutoGenerated        Boolean   @default(true)
   // Lifecycle: the institution answers an open flag, an officer closes it.
-  institutionResponse   String?
+  institutionResponse    String?
   institutionRespondedAt DateTime?
-  resolvedAt      DateTime?
-  resolvedBy      String?   @db.ObjectId
-  resolutionNote  String?
-  createdAt       DateTime  @default(now())
+  resolvedAt             DateTime?
+  resolvedBy             String?   @db.ObjectId
+  resolutionNote         String?
+  createdAt              DateTime  @default(now())
 
   fdr FDR @relation(fields: [fdrId], references: [id], onDelete: Cascade)
 
@@ -303,24 +304,24 @@ model FDRTimelineEntry {
 }
 
 model VerificationRequest {
-  id             String        @id @default(auto()) @map("_id") @db.ObjectId
-  fdrId          String        @db.ObjectId
-  tokenHash      String        @unique
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  fdrId          String    @db.ObjectId
+  tokenHash      String    @unique
   tokenExpiry    DateTime
   channel        String
-  status         String        @default("PENDING")
+  status         String    @default("PENDING")
   sentToEmail    String
   sentAt         DateTime
   completedAt    DateTime?
   assuranceLevel String?
-  bankBranchId   String        @db.ObjectId
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  bankBranchId   String    @db.ObjectId
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  fdr          FDR                @relation(fields: [fdrId], references: [id], onDelete: Cascade)
-  bankBranch   BankBranch         @relation(fields: [bankBranchId], references: [id], onDelete: Cascade)
-  otp          OTPVerification?
-  result       VerificationResult?
+  fdr        FDR                 @relation(fields: [fdrId], references: [id], onDelete: Cascade)
+  bankBranch BankBranch          @relation(fields: [bankBranchId], references: [id], onDelete: Cascade)
+  otp        OTPVerification?
+  result     VerificationResult?
 
   @@index([fdrId])
   @@index([status])
@@ -329,14 +330,14 @@ model VerificationRequest {
 }
 
 model OTPVerification {
-  id                    String   @id @default(auto()) @map("_id") @db.ObjectId
-  verificationRequestId String   @unique @db.ObjectId
+  id                    String    @id @default(auto()) @map("_id") @db.ObjectId
+  verificationRequestId String    @unique @db.ObjectId
   otpHash               String
-  attempts              Int      @default(0)
-  maxAttempts           Int      @default(5)
+  attempts              Int       @default(0)
+  maxAttempts           Int       @default(5)
   expiresAt             DateTime
   verifiedAt            DateTime?
-  createdAt             DateTime @default(now())
+  createdAt             DateTime  @default(now())
 
   verificationRequest VerificationRequest @relation(fields: [verificationRequestId], references: [id], onDelete: Cascade)
 
@@ -362,45 +363,51 @@ model VerificationResult {
   assuranceLevel        String
   ipAddress             String?
   userAgent             String?
+  // Geolocation enrichment
+  country               String?
+  city                  String?
+  region                String?
   createdAt             DateTime @default(now())
 
   verificationRequest VerificationRequest @relation(fields: [verificationRequestId], references: [id], onDelete: Cascade)
   fdr                 FDR                 @relation(fields: [fdrId], references: [id], onDelete: Cascade)
 
   @@index([verifiedBy])
+  @@index([country])
+  @@index([city])
 }
 
 model ReleaseRequest {
-  id                     String    @id @default(auto()) @map("_id") @db.ObjectId
-  fdrId                  String    @unique @db.ObjectId
-  institutionId          String    @db.ObjectId
-  reason                 String
-  documents              Json
-  status                 String    @default("REQUESTED")
-  checklist              Json
-  requestedBy            String    @db.ObjectId
-  requestedAt            DateTime  @default(now())
-  recommendedBy          String?   @db.ObjectId
-  recommendedAt          DateTime?
-  recommendationRemarks  String?
-  approvedBy             String?   @db.ObjectId
-  approvedAt             DateTime?
-  approvalRemarks        String?
-  rejectedBy             String?   @db.ObjectId
-  rejectedAt             DateTime?
-  rejectionReason        String?
-  releasedAt             DateTime?
-  releaseCertificateUrl  String?
-  slaDeadline            DateTime?
-  createdAt              DateTime  @default(now())
-  updatedAt              DateTime  @updatedAt
+  id                    String    @id @default(auto()) @map("_id") @db.ObjectId
+  fdrId                 String    @unique @db.ObjectId
+  institutionId         String    @db.ObjectId
+  reason                String
+  documents             Json
+  status                String    @default("REQUESTED")
+  checklist             Json
+  requestedBy           String    @db.ObjectId
+  requestedAt           DateTime  @default(now())
+  recommendedBy         String?   @db.ObjectId
+  recommendedAt         DateTime?
+  recommendationRemarks String?
+  approvedBy            String?   @db.ObjectId
+  approvedAt            DateTime?
+  approvalRemarks       String?
+  rejectedBy            String?   @db.ObjectId
+  rejectedAt            DateTime?
+  rejectionReason       String?
+  releasedAt            DateTime?
+  releaseCertificateUrl String?
+  slaDeadline           DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
-  fdr              FDR   @relation("ReleaseRequestFDR", fields: [fdrId], references: [id], onDelete: Cascade)
-  fdrBackLinks     FDR[] @relation("FDRPrimaryReleaseRequest")
-  requestedByUser  User  @relation("ReleaseRequestedBy", fields: [requestedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  fdr               FDR   @relation("ReleaseRequestFDR", fields: [fdrId], references: [id], onDelete: Cascade)
+  fdrBackLinks      FDR[] @relation("FDRPrimaryReleaseRequest")
+  requestedByUser   User  @relation("ReleaseRequestedBy", fields: [requestedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
   recommendedByUser User? @relation("ReleaseRecommendedBy", fields: [recommendedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  approvedByUser   User? @relation("ReleaseApprovedBy", fields: [approvedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  rejectedByUser   User? @relation("ReleaseRejectedBy", fields: [rejectedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  approvedByUser    User? @relation("ReleaseApprovedBy", fields: [approvedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  rejectedByUser    User? @relation("ReleaseRejectedBy", fields: [rejectedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([institutionId])
   @@index([status])
@@ -410,15 +417,15 @@ model ReleaseRequest {
 }
 
 model Notification {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId    String   @db.ObjectId
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String    @db.ObjectId
   type      String
   title     String
   message   String
   channels  String[]
   metadata  Json?
   readAt    DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -440,6 +447,10 @@ model AuditLog {
   after        Json?
   ipAddress    String?
   userAgent    String?
+  // Geolocation enrichment
+  country      String?
+  city         String?
+  region       String?
   hash         String
   previousHash String?
   createdAt    DateTime @default(now())
@@ -449,6 +460,8 @@ model AuditLog {
   @@index([entityId])
   @@index([createdAt])
   @@index([hash])
+  @@index([country])
+  @@index([city])
 }
 
 model RulesConfig {
@@ -458,20 +471,20 @@ model RulesConfig {
   description String?
   updatedBy   String   @db.ObjectId
   updatedAt   DateTime @updatedAt
-
 }
 
 model Webhook {
-  id          String            @id @default(auto()) @map("_id") @db.ObjectId
-  name        String
-  url         String
-  events      String[]
-  secret      String
-  isActive    Boolean           @default(true)
-  createdBy   String            @db.ObjectId
-  deliveries  WebhookDelivery[]
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  id                String              @id @default(auto()) @map("_id") @db.ObjectId
+  name              String
+  url               String
+  events            String[]
+  secret            String
+  isActive          Boolean             @default(true)
+  createdBy         String              @db.ObjectId
+  deliveries        WebhookDelivery[]
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  WebhookDeadLetter WebhookDeadLetter[]
 
   @@index([isActive])
 }
@@ -494,6 +507,47 @@ model WebhookDelivery {
   @@index([event])
   @@index([succeededAt])
   @@index([nextRetryAt])
+}
+
+model WebhookDeadLetter {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  webhookId      String   @db.ObjectId
+  event          String
+  payload        Json
+  responseStatus Int?
+  responseBody   String?
+  attempts       Int      @default(0)
+  lastError      String?
+  failedAt       DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId])
+  @@index([failedAt])
+}
+
+model UserSession {
+  id                String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String    @db.ObjectId
+  deviceFingerprint String
+  ipAddress         String?
+  userAgent         String?
+  country           String?
+  city              String?
+  region            String?
+  asn               String?
+  isp               String?
+  createdAt         DateTime  @default(now())
+  lastActiveAt      DateTime  @default(now())
+  revokedAt         DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([deviceFingerprint])
+  @@index([lastActiveAt])
+  @@index([revokedAt])
 }
 
 model APIKey {

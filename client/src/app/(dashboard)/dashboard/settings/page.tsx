@@ -3,7 +3,7 @@
 /**
  * Settings.
  *
- * Account security (password, MFA) and appearance. Everything here talks to a
+ * Account security (password, MFA, active sessions) and appearance. Everything here talks to a
  * real endpoint: password changes revoke other sessions, MFA setup returns a
  * genuine TOTP secret, and the theme choice is applied app-wide.
  */
@@ -11,27 +11,54 @@
 import * as React from 'react';
 import Image from 'next/image';
 import { useTheme } from 'next-themes';
-import { Copy, KeyRound, Loader2, Monitor, Moon, ShieldCheck, Sun, Trash2 } from 'lucide-react';
+import {
+  Copy,
+  KeyRound,
+  Loader2,
+  Monitor,
+  Moon,
+  ShieldCheck,
+  Sun,
+  Trash2,
+  LogOut,
+  Smartphone,
+  Monitor as MonitorIcon,
+  Globe,
+  MapPin,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { PageHeader } from '@/components/ui/page-header';
 import { Separator } from '@/components/ui/separator';
-import { Switch } from '@/components/ui/switch';
 import { useAuthStore } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { getErrorMessage } from '@/lib/hooks/use-api';
 import { PASSWORD_RULES } from '@/lib/password';
 import { cn } from '@/lib/utils';
+import { formatDateTime } from '@/lib/utils';
 
 const THEME_OPTIONS = [
   { value: 'light', label: 'Light', icon: Sun },
   { value: 'dark', label: 'Dark', icon: Moon },
   { value: 'system', label: 'System', icon: Monitor },
 ] as const;
+
+interface Session {
+  id: string;
+  deviceFingerprint: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  country: string | null;
+  city: string | null;
+  region: string | null;
+  createdAt: string;
+  lastActiveAt: string;
+}
 
 export default function SettingsPage() {
   const user = useAuthStore((state) => state.user);
@@ -135,6 +162,91 @@ export default function SettingsPage() {
       setMfaBusy(false);
     }
   };
+
+  // --- Session Management ---
+  const [sessions, setSessions] = React.useState<Session[]>([]);
+  const [sessionsLoading, setSessionsLoading] = React.useState(false);
+  const [currentFingerprint, setCurrentFingerprint] = React.useState<string | null>(null);
+
+  const fetchSessions = async () => {
+    setSessionsLoading(true);
+    try {
+      const response: any = await api.get('/auth/sessions');
+      setSessions(response?.data ?? []);
+      // Identify current session by fingerprint
+      const fp = await generateFingerprint();
+      setCurrentFingerprint(fp);
+    } catch (error) {
+      toast.error('Could not load sessions', { description: getErrorMessage(error) });
+    } finally {
+      setSessionsLoading(false);
+    }
+  };
+
+  const generateFingerprint = async (): Promise<string> => {
+    const userAgent = navigator.userAgent;
+    const acceptLanguage = navigator.languages.join(',');
+    const data = `${userAgent}|${acceptLanguage}`;
+    const encoder = new TextEncoder();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(data));
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+      .substring(0, 32);
+  };
+
+  const revokeSession = async (sessionId: string, isCurrent: boolean) => {
+    if (isCurrent) {
+      toast.error(
+        'Cannot revoke current session from here. Use "Sign out everywhere else" instead.'
+      );
+      return;
+    }
+    try {
+      await api.delete(`/auth/sessions/${sessionId}`);
+      toast.success('Session revoked');
+      void fetchSessions();
+    } catch (error) {
+      toast.error('Could not revoke session', { description: getErrorMessage(error) });
+    }
+  };
+
+  const revokeAllOtherSessions = async () => {
+    try {
+      await api.delete('/auth/sessions');
+      toast.success('Signed out from all other devices');
+      void fetchSessions();
+    } catch (error) {
+      toast.error('Could not revoke sessions', { description: getErrorMessage(error) });
+    }
+  };
+
+  const getDeviceInfo = (userAgent: string | null) => {
+    if (!userAgent) return { type: 'Unknown', icon: Globe };
+    const ua = userAgent.toLowerCase();
+    if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone')) {
+      return { type: 'Mobile', icon: Smartphone };
+    }
+    if (ua.includes('tablet') || ua.includes('ipad')) {
+      return { type: 'Tablet', icon: MonitorIcon };
+    }
+    return { type: 'Desktop', icon: MonitorIcon };
+  };
+
+  const getCountryFlag = (countryCode?: string | null) => {
+    if (!countryCode) return '🌐';
+    return String.fromCodePoint(
+      ...countryCode
+        .toUpperCase()
+        .split('')
+        .map((c) => 127397 + c.charCodeAt(0))
+    );
+  };
+
+  React.useEffect(() => {
+    void fetchSessions();
+  }, []);
 
   return (
     <DashboardLayout>
@@ -407,6 +519,110 @@ export default function SettingsPage() {
                     Disable
                   </Button>
                 </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Active Sessions */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-[15px] font-semibold">
+              <Smartphone className="h-4 w-4" />
+              Active sessions
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {sessionsLoading ? (
+              <div className="space-y-3">
+                {[0, 1].map((key) => (
+                  <div key={key} className="flex items-center gap-3 rounded-lg border p-3">
+                    <div className="bg-muted h-10 w-10 rounded-lg" />
+                    <div className="flex-1 space-y-1">
+                      <Skeleton className="h-4 w-40" />
+                      <Skeleton className="h-3 w-60" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : sessions.length === 0 ? (
+              <div className="py-6 text-center">
+                <Smartphone className="text-muted-foreground/50 mx-auto h-12 w-12" />
+                <p className="text-muted-foreground mt-2">No active sessions found</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {sessions.map((session) => {
+                  const isCurrent = session.deviceFingerprint === currentFingerprint;
+                  const device = getDeviceInfo(session.userAgent);
+                  const DeviceIcon = device.icon;
+                  return (
+                    <div
+                      key={session.id}
+                      className={cn(
+                        'flex items-center gap-3 rounded-lg border p-3 transition-colors',
+                        isCurrent
+                          ? 'border-primary/30 bg-primary/5'
+                          : 'border-border/50 hover:bg-accent/30'
+                      )}
+                    >
+                      <DeviceIcon
+                        className={cn(
+                          'h-8 w-8 shrink-0',
+                          isCurrent ? 'text-primary' : 'text-muted-foreground'
+                        )}
+                      />
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">{device.type}</span>
+                          {isCurrent && (
+                            <span className="bg-primary/10 text-primary rounded-full px-2 py-0.5 text-[10px] font-medium">
+                              Current session
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-muted-foreground truncate font-mono text-[11px]">
+                          {session.ipAddress ?? 'Unknown IP'}
+                          {session.city && (
+                            <span className="ml-2 flex items-center gap-1">
+                              <MapPin className="h-2.5 w-2.5" />
+                              {session.city}, {session.region || ''}, {session.country || ''}
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-muted-foreground truncate text-[10px]">
+                          {session.userAgent ?? 'Unknown device'}
+                        </p>
+                        <div className="text-muted-foreground flex items-center gap-3 text-[10px]">
+                          <span>Created: {formatDateTime(session.createdAt)}</span>
+                          <span>Last active: {formatDateTime(session.lastActiveAt)}</span>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {isCurrent ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void revokeAllOtherSessions()}
+                          >
+                            <LogOut className="mr-1.5 h-3.5 w-3.5" />
+                            Sign out elsewhere
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-destructive hover:bg-destructive/10"
+                            onClick={() => void revokeSession(session.id, false)}
+                          >
+                            <LogOut className="mr-1.5 h-3.5 w-3.5" />
+                            Revoke
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </CardContent>

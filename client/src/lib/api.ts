@@ -32,7 +32,7 @@ class ApiClient {
   }
 
   private setupInterceptors() {
-    // Request interceptor - add auth token
+    // Request interceptor - add auth token and CSRF token
     this.client.interceptors.request.use(
       async (config) => {
         config.metadata = { startTime: Date.now() };
@@ -48,6 +48,17 @@ class ApiClient {
         const token = getAccessToken();
         if (token) {
           config.headers.Authorization = `Bearer ${token}`;
+        }
+
+        // Attach CSRF token from cookie for state-changing requests
+        if (
+          typeof window !== 'undefined' &&
+          ['post', 'put', 'patch', 'delete'].includes(config.method || '')
+        ) {
+          const csrfToken = this.getCsrfTokenFromCookie();
+          if (csrfToken) {
+            config.headers['X-CSRF-Token'] = csrfToken;
+          }
         }
 
         return config;
@@ -186,6 +197,21 @@ class ApiClient {
   // Health check
   async health() {
     return this.get('/health');
+  }
+
+  /**
+   * Get CSRF token from cookie
+   */
+  private getCsrfTokenFromCookie(): string | null {
+    if (typeof document === 'undefined') return null;
+    const cookies = document.cookie.split(';');
+    for (const cookie of cookies) {
+      const [name, value] = cookie.trim().split('=');
+      if (name === 'csrf-token') {
+        return value;
+      }
+    }
+    return null;
   }
 }
 

@@ -209,6 +209,7 @@ export const createUserSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100, 'Name too long').trim(),
   password: passwordSchema,
   role: userRoleSchema,
+  status: userStatusSchema.optional().default('ACTIVE'),
   institutionId: objectIdSchema.optional(),
   bankId: objectIdSchema.optional(),
 });

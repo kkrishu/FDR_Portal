@@ -4,16 +4,17 @@ import { ThemeProvider as NextThemesProvider } from 'next-themes';
 import type { ReactNode } from 'react';
 
 /**
- * Dark mode. `next-themes` writes the class onto <html> before paint, which is
- * why the existing `.dark` palette can be activated without a flash.
+ * Light theme only - no dark mode or system preference support.
+ * Forces light theme for consistent Apple-design aesthetic.
  */
 export function ThemeProvider({ children }: { children: ReactNode }) {
   return (
     <NextThemesProvider
       attribute="class"
       defaultTheme="light"
-      enableSystem
+      enableSystem={false}
       disableTransitionOnChange
+      themes={['light']}
     >
       {children}
     </NextThemesProvider>

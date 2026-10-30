@@ -23,6 +23,34 @@ import { mailService } from '@/services/mailService';
 import { notificationService } from '@/services/notificationService';
 import { auditService } from '@/services/auditService';
 import { NOTIFICATION_TYPES } from '@fdr-portal/shared/constants';
+import geoip from 'geoip-lite';
+
+/**
+ * Enrich IP address with geolocation data
+ */
+function enrichIpAddress(ipAddress?: string | null): {
+  country?: string;
+  city?: string;
+  region?: string;
+} | null {
+  if (!ipAddress || ipAddress === '::1' || ipAddress === '127.0.0.1' || ipAddress.startsWith('192.168.') || ipAddress.startsWith('10.') || ipAddress.startsWith('172.')) {
+    return null;
+  }
+  
+  try {
+    const geo = geoip.lookup(ipAddress);
+    if (geo) {
+      return {
+        country: geo.country,
+        city: geo.city,
+        region: geo.region,
+      };
+    }
+  } catch (error) {
+    console.warn('Failed to lookup geolocation for verification:', error);
+  }
+  return null;
+}
 
 const router: Router = Router();
 
@@ -398,6 +426,9 @@ router.post('/verify',
       throw new AuthenticationError('Invalid OTP', ErrorCodes.OTP_INVALID);
     }
     
+    // Enrich with geolocation
+    const geo = enrichIpAddress(req.ip);
+    
     // The bank confirms through the secure link without signing in, so attribute
     // the result to a real user: the bank's manager when one exists, otherwise an
     // administrator. Both are valid ObjectIds; a placeholder string is not.
@@ -464,6 +495,9 @@ router.post('/verify',
           assuranceLevel,
           ipAddress: req.ip,
           userAgent: req.get('user-agent'),
+          country: geo?.country,
+          city: geo?.city,
+          region: geo?.region,
         },
       });
       
@@ -639,6 +673,9 @@ async function processNodalVerification(
   const status = mismatches.length === 0 ? VERIFICATION_STATUS.VERIFIED : VERIFICATION_STATUS.FLAGGED;
   const assuranceLevel = mismatches.length === 0 ? ASSURANCE_LEVELS.HIGH : ASSURANCE_LEVELS.LOW;
   
+  // Enrich with geolocation
+  const geo = enrichIpAddress(req.ip);
+  
   await prisma.$transaction(async (tx) => {
     await tx.verificationResult.create({
       data: {
@@ -664,6 +701,9 @@ async function processNodalVerification(
         assuranceLevel,
         ipAddress: req.ip,
         userAgent: req.get('user-agent'),
+        country: geo?.country,
+        city: geo?.city,
+        region: geo?.region,
       },
     });
     

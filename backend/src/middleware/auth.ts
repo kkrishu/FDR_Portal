@@ -36,10 +36,8 @@ function extractToken(req: Request): string | null {
     return req.cookies.accessToken;
   }
 
-  // Check query parameter (for SSE, WebSocket, etc.)
-  if (req.query.accessToken && typeof req.query.accessToken === 'string') {
-    return req.query.accessToken;
-  }
+  // SECURITY: Query parameter token support removed to prevent token leakage in logs/referrer
+  // For SSE/WebSocket, use proper authentication mechanisms instead
 
   return null;
 }
@@ -405,4 +403,99 @@ export async function revokeAllRefreshTokens(userId: string): Promise<void> {
     where: { userId, revoked: false },
     data: { revoked: true },
   });
+}
+
+/**
+ * Generate device fingerprint from request
+ */
+export function generateDeviceFingerprint(req: Request): string {
+  const userAgent = req.get('user-agent') || '';
+  const acceptLanguage = req.get('accept-language') || '';
+  const acceptEncoding = req.get('accept-encoding') || '';
+  const ip = req.ip || '';
+  
+  // Simple hash of identifying characteristics
+  const data = `${userAgent}|${acceptLanguage}|${acceptEncoding}|${ip}`;
+  return require('crypto').createHash('sha256').update(data).digest('hex').substring(0, 32);
+}
+
+/**
+ * Track user session - creates or updates session on authenticated requests
+ */
+export async function trackSession(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    return next();
+  }
+
+  try {
+    const deviceFingerprint = generateDeviceFingerprint(req);
+    const ipAddress = req.ip;
+    const userAgent = req.get('user-agent');
+
+    // Find existing session
+    let session = await prisma.userSession.findFirst({
+      where: {
+        userId: req.user.id,
+        deviceFingerprint,
+        revokedAt: null,
+      },
+    });
+
+    if (session) {
+      // Update last active time
+      await prisma.userSession.update({
+        where: { id: session.id },
+        data: { lastActiveAt: new Date() },
+      });
+    } else {
+      // Create new session
+      // Enrich with geolocation
+      const geo = enrichIpAddress(ipAddress);
+      
+      await prisma.userSession.create({
+        data: {
+          userId: req.user.id,
+          deviceFingerprint,
+          ipAddress,
+          userAgent,
+          country: geo?.country,
+          city: geo?.city,
+          region: geo?.region,
+        },
+      });
+    }
+  } catch (error) {
+    // Don't break the request if session tracking fails
+    console.warn('Session tracking failed:', error);
+  }
+
+  next();
+}
+
+/**
+ * Enrich IP address with geolocation data
+ */
+function enrichIpAddress(ipAddress?: string | null): {
+  country?: string;
+  city?: string;
+  region?: string;
+} | null {
+  if (!ipAddress || ipAddress === '::1' || ipAddress === '127.0.0.1' || ipAddress.startsWith('192.168.') || ipAddress.startsWith('10.') || ipAddress.startsWith('172.')) {
+    return null;
+  }
+  
+  try {
+    const geoip = require('geoip-lite');
+    const geo = geoip.lookup(ipAddress);
+    if (geo) {
+      return {
+        country: geo.country,
+        city: geo.city,
+        region: geo.region,
+      };
+    }
+  } catch (error) {
+    console.warn('Failed to lookup geolocation:', error);
+  }
+  return null;
 }

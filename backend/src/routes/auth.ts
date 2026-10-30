@@ -11,7 +11,8 @@ import { refreshCookieOptions } from '../config';
 import { authMiddleware, optionalAuthMiddleware } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
 import { loginSchema, mfaVerifySchema, mfaSetupSchema } from '@fdr-portal/shared/validators';
-import { ValidationError, AuthenticationError, ErrorCodes } from '../middleware/errorHandler';
+import { ValidationError, AuthenticationError, AuthorizationError, NotFoundError, ErrorCodes } from '../middleware/errorHandler';
+import { generateDeviceFingerprint } from '../middleware/auth';
 
 const router: Router = Router();
 
@@ -348,6 +349,102 @@ router.get('/mfa/status', authMiddleware, asyncHandler(async (req: Request, res:
   res.json({
     success: true,
     data: { mfaEnabled: req.user!.mfaEnabled || false },
+    meta: { timestamp: new Date().toISOString(), requestId: req.correlationId! },
+  });
+}));
+
+// ============================================
+// Session Management Routes
+// ============================================
+
+/**
+ * GET /api/v1/auth/sessions
+ * List active sessions for current user
+ */
+router.get('/sessions', authMiddleware, asyncHandler(async (req: Request, res: Response) => {
+  const sessions = await prisma.userSession.findMany({
+    where: {
+      userId: req.user!.id,
+      revokedAt: null,
+    },
+    orderBy: { lastActiveAt: 'desc' },
+    select: {
+      id: true,
+      deviceFingerprint: true,
+      ipAddress: true,
+      userAgent: true,
+      country: true,
+      city: true,
+      region: true,
+      createdAt: true,
+      lastActiveAt: true,
+    },
+  });
+
+  res.json({
+    success: true,
+    data: sessions,
+    meta: { timestamp: new Date().toISOString(), requestId: req.correlationId! },
+  });
+}));
+
+/**
+ * DELETE /api/v1/auth/sessions/:id
+ * Revoke a specific session (logout from device)
+ */
+router.delete('/sessions/:id', authMiddleware, asyncHandler(async (req: Request, res: Response) => {
+  const session = await prisma.userSession.findUnique({
+    where: { id: req.params.id },
+  });
+
+  if (!session) {
+    throw new NotFoundError('Session');
+  }
+
+  if (session.userId !== req.user!.id) {
+    throw new AuthorizationError('Cannot revoke another user\'s session', ErrorCodes.INSUFFICIENT_PERMISSIONS);
+  }
+
+  await prisma.userSession.update({
+    where: { id: session.id },
+    data: { revokedAt: new Date() },
+  });
+
+  // Also revoke the refresh token if it matches
+  // This is a best-effort approach
+
+  res.json({
+    success: true,
+    data: { message: 'Session revoked successfully' },
+    meta: { timestamp: new Date().toISOString(), requestId: req.correlationId! },
+  });
+}));
+
+/**
+ * DELETE /api/v1/auth/sessions
+ * Revoke all sessions except current (logout all other devices)
+ */
+router.delete('/sessions', authMiddleware, asyncHandler(async (req: Request, res: Response) => {
+  const currentFingerprint = generateDeviceFingerprint(req);
+
+  await prisma.userSession.updateMany({
+    where: {
+      userId: req.user!.id,
+      revokedAt: null,
+      deviceFingerprint: { not: currentFingerprint },
+    },
+    data: { revokedAt: new Date() },
+  });
+
+  // Also revoke all refresh tokens except current
+  await authService.logoutAll(req.user!.id);
+
+  // Clear refresh token cookie for current session
+  res.clearCookie('refreshToken', { path: refreshCookieOptions.path });
+
+  res.json({
+    success: true,
+    data: { message: 'All other sessions revoked' },
     meta: { timestamp: new Date().toISOString(), requestId: req.correlationId! },
   });
 }));

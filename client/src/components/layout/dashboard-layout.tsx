@@ -413,7 +413,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
             {children}
           </div>
         </div>
-        <GuidedTour />
+        {!isLoading && <GuidedTour />}
       </SidebarInset>
     </SidebarProvider>
   );

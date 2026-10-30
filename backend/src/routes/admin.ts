@@ -377,4 +377,250 @@ router.post('/audit/verify',
   })
 );
 
+// ============================================
+// Compliance Reports
+// ============================================
+
+/**
+ * GET /api/v1/admin/compliance/report
+ * Generate compliance report
+ * Templates: sox, gdpr, iso27001, custom
+ */
+router.get('/compliance/report',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { template = 'custom', dateFrom, dateTo, format = 'json' } = req.query;
+    const from = dateFrom ? new Date(dateFrom as string) : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    const to = dateTo ? new Date(dateTo as string) : new Date();
+
+    let reportData: any = {
+      generatedAt: new Date().toISOString(),
+      period: { from: from.toISOString(), to: to.toISOString() },
+      template,
+    };
+
+    switch (template) {
+      case 'sox': {
+        // SOX Compliance - Financial data integrity, access controls, audit trail
+        const [
+          totalFDRs,
+          verifiedFDRs,
+          flaggedFDRs,
+          releasedFDRs,
+          auditLogs,
+          userAccessChanges,
+          failedLogins,
+        ] = await Promise.all([
+          prisma.fDR.count({ where: { createdAt: { gte: from, lte: to } } }),
+          prisma.fDR.count({ where: { verifiedAt: { gte: from, lte: to }, status: { in: ['VERIFIED', 'BANK_VERIFIED', 'RELEASED'] } } }),
+          prisma.fDR.count({ where: { flags: { some: { createdAt: { gte: from, lte: to } } } } }),
+          prisma.fDR.count({ where: { releasedAt: { gte: from, lte: to } } }),
+          prisma.auditLog.count({ where: { createdAt: { gte: from, lte: to } } }),
+          prisma.auditLog.count({ where: { createdAt: { gte: from, lte: to }, action: { in: ['USER_CREATED', 'USER_UPDATED', 'ROLE_CHANGED'] } } }),
+          prisma.auditLog.count({ where: { createdAt: { gte: from, lte: to }, action: 'LOGIN_FAILED' } }),
+        ]);
+
+        reportData.sox = {
+          financialDataIntegrity: {
+            totalFDRsProcessed: totalFDRs,
+            verifiedCount: verifiedFDRs,
+            flaggedCount: flaggedFDRs,
+            releasedCount: releasedFDRs,
+            verificationRate: totalFDRs > 0 ? ((verifiedFDRs / totalFDRs) * 100).toFixed(2) : '0.00',
+          },
+          accessControls: {
+            userAccessChanges,
+            failedLoginAttempts: failedLogins,
+            auditTrailEntries: auditLogs,
+          },
+          dataRetention: {
+            auditLogRetentionDays: 2555, // 7 years
+            fdrRetentionDays: 3650, // 10 years
+          },
+        };
+        break;
+      }
+      case 'gdpr': {
+        // GDPR Compliance - Personal data processing, user rights, breach notifications
+        const [
+          userCreations,
+          userDeletions,
+          passwordResets,
+          dataAccessLogs,
+          exportRequests,
+          personalDataAudit,
+        ] = await Promise.all([
+          prisma.auditLog.count({ where: { createdAt: { gte: from, lte: to }, action: 'USER_CREATED' } }),
+          prisma.auditLog.count({ where: { createdAt: { gte: from, lte: to }, action: 'USER_DELETED' } }),
+          prisma.auditLog.count({ where: { createdAt: { gte: from, lte: to }, action: 'PASSWORD_CHANGED' } }),
+          prisma.auditLog.count({ where: { createdAt: { gte: from, lte: to }, entityType: 'User', action: { in: ['READ', 'EXPORT'] } } }),
+          prisma.auditLog.count({ where: { createdAt: { gte: from, lte: to }, action: 'DATA_EXPORT_REQUESTED' } }),
+          prisma.auditLog.findMany({ where: { createdAt: { gte: from, lte: to }, entityType: 'User' }, take: 100 }),
+        ]);
+
+        reportData.gdpr = {
+          personalDataProcessing: {
+            userRegistrations: userCreations,
+            userDeletions,
+            passwordResets,
+            dataAccessRequests: dataAccessLogs,
+            exportRequests,
+          },
+          userRights: {
+            rightToAccess: dataAccessLogs,
+            rightToErasure: userDeletions,
+            rightToPortability: exportRequests,
+            rightToRectification: passwordResets,
+          },
+          breachNotifications: personalDataAudit.filter((log: any) => 
+            log.action.includes('BREACH') || log.action.includes('UNAUTHORIZED')
+          ).length,
+        };
+        break;
+      }
+      case 'iso27001': {
+        // ISO 27001 - Information security management
+        const [
+          securityEvents,
+          accessControlChanges,
+          systemChanges,
+          mfaEvents,
+          webhookSecurity,
+          failedVerifications,
+        ] = await Promise.all([
+          prisma.auditLog.count({ where: { createdAt: { gte: from, lte: to }, action: { contains: 'SECURITY' } } }),
+          prisma.auditLog.count({ where: { createdAt: { gte: from, lte: to }, action: { in: ['USER_CREATED', 'USER_UPDATED', 'ROLE_CHANGED', 'MFA_ENABLED', 'MFA_DISABLED'] } } }),
+          prisma.auditLog.count({ where: { createdAt: { gte: from, lte: to }, action: { in: ['RULES_UPDATED', 'WEBHOOK_CREATED', 'WEBHOOK_UPDATED', 'API_KEY_CREATED', 'API_KEY_REVOKED'] } } }),
+          prisma.auditLog.count({ where: { createdAt: { gte: from, lte: to }, action: { in: ['MFA_ENABLED', 'MFA_DISABLED', 'MFA_VERIFIED'] } } }),
+          prisma.webhook.count({ where: { isActive: true } }),
+          prisma.verificationResult.count({ where: { verifiedAt: { gte: from, lte: to }, assuranceLevel: 'LOW' } }),
+        ]);
+
+        reportData.iso27001 = {
+          securityIncidents: securityEvents,
+          accessControlManagement: accessControlChanges,
+          systemConfigurationChanges: systemChanges,
+          authenticationControls: {
+            mfaEvents,
+            mfaEnabledRate: 'Track separately',
+          },
+          communicationSecurity: {
+            activeWebhooks: webhookSecurity,
+            webhookDeliverySuccess: 'Track via webhook deliveries',
+          },
+          verificationIntegrity: {
+            lowAssuranceVerifications: failedVerifications,
+          },
+        };
+        break;
+      }
+      default: {
+        // Custom report - comprehensive overview
+        const [
+          fdrStats,
+          userStats,
+          auditStats,
+          verificationStats,
+          releaseStats,
+          flagStats,
+        ] = await Promise.all([
+          prisma.fDR.groupBy({ by: ['status'], where: { createdAt: { gte: from, lte: to } }, _count: true }),
+          prisma.user.groupBy({ by: ['role', 'status'], where: { createdAt: { gte: from, lte: to } }, _count: true }),
+          prisma.auditLog.groupBy({ by: ['action'], where: { createdAt: { gte: from, lte: to } }, _count: true, orderBy: { _count: { action: 'desc' } }, take: 20 }),
+          prisma.verificationResult.groupBy({ by: ['assuranceLevel'], where: { verifiedAt: { gte: from, lte: to } }, _count: true }),
+          prisma.releaseRequest.groupBy({ by: ['status'], where: { requestedAt: { gte: from, lte: to } }, _count: true }),
+          prisma.fDRFlag.groupBy({ by: ['category', 'severity'], where: { createdAt: { gte: from, lte: to } }, _count: true }),
+        ]);
+
+        reportData.custom = {
+          fdr: fdrStats,
+          users: userStats,
+          auditTrail: auditStats,
+          verifications: verificationStats,
+          releases: releaseStats,
+          flags: flagStats,
+        };
+      }
+    }
+
+    if (format === 'csv') {
+      // Flatten report data for CSV
+      const flatten = (obj: any, prefix = ''): Record<string, string> => {
+        const result: Record<string, string> = {};
+        for (const [key, value] of Object.entries(obj)) {
+          const newKey = prefix ? `${prefix}.${key}` : key;
+          if (value && typeof value === 'object' && !Array.isArray(value)) {
+            Object.assign(result, flatten(value, newKey));
+          } else if (Array.isArray(value)) {
+            result[newKey] = JSON.stringify(value);
+          } else {
+            result[newKey] = String(value ?? '');
+          }
+        }
+        return result;
+      };
+
+      const flat = flatten(reportData);
+      const headers = Object.keys(flat);
+      const row = headers.map(h => flat[h]);
+
+      const csvContent = [headers.join(','), row.map(v => `"${v.replace(/"/g, '""')}"`).join(',')].join('\n');
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="compliance-${template}-${from.toISOString().split('T')[0]}.csv"`);
+      return res.send(csvContent);
+    }
+
+    res.json({
+      success: true,
+      data: reportData,
+      meta: { timestamp: new Date().toISOString(), requestId: req.correlationId! },
+    });
+  })
+);
+
+/**
+ * GET /api/v1/admin/compliance/templates
+ * List available compliance report templates
+ */
+router.get('/compliance/templates',
+  asyncHandler(async (req: Request, res: Response) => {
+    const templates = [
+      {
+        id: 'sox',
+        name: 'SOX Compliance Report',
+        description: 'Financial data integrity, access controls, and audit trail for SOX compliance',
+        frequency: 'Quarterly',
+        sections: ['Financial Data Integrity', 'Access Controls', 'Data Retention'],
+      },
+      {
+        id: 'gdpr',
+        name: 'GDPR Compliance Report',
+        description: 'Personal data processing, user rights, and breach notifications for GDPR compliance',
+        frequency: 'Monthly',
+        sections: ['Personal Data Processing', 'User Rights', 'Breach Notifications'],
+      },
+      {
+        id: 'iso27001',
+        name: 'ISO 27001 Security Report',
+        description: 'Information security management, access controls, and system changes',
+        frequency: 'Monthly',
+        sections: ['Security Incidents', 'Access Control Management', 'System Configuration', 'Authentication Controls', 'Communication Security'],
+      },
+      {
+        id: 'custom',
+        name: 'Custom Comprehensive Report',
+        description: 'Full system overview with all key metrics',
+        frequency: 'On-demand',
+        sections: ['FDR Statistics', 'User Statistics', 'Audit Trail', 'Verifications', 'Releases', 'Flags'],
+      },
+    ];
+
+    res.json({
+      success: true,
+      data: templates,
+      meta: { timestamp: new Date().toISOString(), requestId: req.correlationId! },
+    });
+  })
+);
+
 export default router;

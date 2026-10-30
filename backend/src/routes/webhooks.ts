@@ -220,51 +220,216 @@ router.post('/:id/retry/:deliveryId',
       throw new AppError('Delivery does not belong to this webhook', HttpStatus.BAD_REQUEST);
     }
     
-    const signature = crypto
-      .createHmac('sha256', delivery.webhook.secret)
-      .update(JSON.stringify(delivery.payload))
-      .digest('hex');
+    await attemptWebhookDelivery(delivery, req.correlationId!);
     
-    try {
-      const response = await fetch(delivery.webhook.url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Webhook-Signature': signature,
-          'X-Webhook-Event': delivery.event,
-        },
-        body: JSON.stringify(delivery.payload),
-      });
-      
+    res.json({
+      success: true,
+      data: { message: 'Retry initiated' },
+      meta: { timestamp: new Date().toISOString(), requestId: req.correlationId! },
+    });
+  })
+);
+
+/**
+ * POST /api/v1/webhooks/:id/dead-letter/:dlqId/retry
+ * Retry a dead letter entry
+ */
+router.post('/:id/dead-letter/:dlqId/retry',
+  asyncHandler(async (req: Request, res: Response) => {
+    const dlq = await prisma.webhookDeadLetter.findUnique({
+      where: { id: req.params.dlqId },
+      include: { webhook: true },
+    });
+    
+    if (!dlq) {
+      throw new NotFoundError('Dead letter entry');
+    }
+    
+    if (dlq.webhookId !== req.params.id) {
+      throw new AppError('Dead letter entry does not belong to this webhook', HttpStatus.BAD_REQUEST);
+    }
+    
+    // Create a new delivery attempt from the dead letter
+    const delivery = await prisma.webhookDelivery.create({
+      data: {
+        webhookId: dlq.webhookId,
+        event: dlq.event,
+        payload: dlq.payload as any,
+        attempts: dlq.attempts,
+        createdAt: new Date(),
+      },
+    });
+    
+    // Remove from dead letter queue
+    await prisma.webhookDeadLetter.delete({ where: { id: dlq.id } });
+    
+    await attemptWebhookDelivery(delivery, req.correlationId!);
+    
+    res.json({
+      success: true,
+      data: { message: 'Retry initiated from dead letter queue' },
+      meta: { timestamp: new Date().toISOString(), requestId: req.correlationId! },
+    });
+  })
+);
+
+/**
+ * GET /api/v1/webhooks/:id/dead-letter
+ * Get dead letter queue entries for a webhook
+ */
+router.get('/:id/dead-letter',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { page = 1, limit = 20 } = req.query;
+    
+    const [entries, total] = await Promise.all([
+      prisma.webhookDeadLetter.findMany({
+        where: { webhookId: req.params.id },
+        orderBy: { failedAt: 'desc' },
+        skip: (Number(page) - 1) * Number(limit),
+        take: Number(limit),
+      }),
+      prisma.webhookDeadLetter.count({ where: { webhookId: req.params.id } }),
+    ]);
+    
+    res.json({
+      success: true,
+      data: entries,
+      meta: {
+        timestamp: new Date().toISOString(),
+        requestId: req.correlationId!,
+        page: Number(page),
+        limit: Number(limit),
+        total,
+        totalPages: Math.ceil(total / Number(limit)),
+      },
+    });
+  })
+);
+
+/**
+ * Calculate exponential backoff delay
+ * Attempt 1: 5 min, 2: 15 min, 3: 1 hr, 4: 6 hr, 5: 24 hr, 6: 48 hr (max)
+ */
+function calculateBackoffDelay(attempt: number): number {
+  const delays = [5 * 60 * 1000, 15 * 60 * 1000, 60 * 60 * 1000, 6 * 60 * 60 * 1000, 24 * 60 * 60 * 1000, 48 * 60 * 60 * 1000];
+  return delays[Math.min(attempt, delays.length - 1)];
+}
+
+/**
+ * Attempt webhook delivery with exponential backoff
+ */
+async function attemptWebhookDelivery(delivery: any, correlationId: string) {
+  const signature = crypto
+    .createHmac('sha256', delivery.webhook.secret)
+    .update(JSON.stringify(delivery.payload))
+    .digest('hex');
+  
+  try {
+    const response = await fetch(delivery.webhook.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Webhook-Signature': signature,
+        'X-Webhook-Event': delivery.event,
+      },
+      body: JSON.stringify(delivery.payload),
+    });
+    
+    const responseBody = await response.text();
+    const newAttempts = delivery.attempts + 1;
+    
+    if (response.ok) {
+      // Success
       await prisma.webhookDelivery.update({
         where: { id: delivery.id },
         data: {
           responseStatus: response.status,
-          responseBody: await response.text(),
-          attempts: { increment: 1 },
-          succeededAt: response.ok ? new Date() : null,
-          nextRetryAt: response.ok ? null : new Date(Date.now() + 5 * 60 * 1000), // retry in 5 min
+          responseBody,
+          attempts: newAttempts,
+          succeededAt: new Date(),
+          nextRetryAt: null,
         },
       });
-      
-      res.json({
-        success: true,
-        data: { status: response.status, ok: response.ok },
-        meta: { timestamp: new Date().toISOString(), requestId: req.correlationId! },
-      });
-    } catch (error: any) {
+    } else if (newAttempts >= 6) {
+      // Max retries exceeded - move to dead letter queue
+      await prisma.$transaction([
+        prisma.webhookDelivery.update({
+          where: { id: delivery.id },
+          data: {
+            responseStatus: response.status,
+            responseBody,
+            attempts: newAttempts,
+            nextRetryAt: null,
+          },
+        }),
+        prisma.webhookDeadLetter.create({
+          data: {
+            webhookId: delivery.webhookId,
+            event: delivery.event,
+            payload: delivery.payload,
+            responseStatus: response.status,
+            responseBody,
+            attempts: newAttempts,
+            lastError: `HTTP ${response.status}: ${responseBody}`,
+          },
+        }),
+      ]);
+    } else {
+      // Schedule next retry with exponential backoff
+      const nextRetryAt = new Date(Date.now() + calculateBackoffDelay(newAttempts));
       await prisma.webhookDelivery.update({
         where: { id: delivery.id },
         data: {
-          responseBody: error.message,
-          attempts: { increment: 1 },
-          nextRetryAt: new Date(Date.now() + 5 * 60 * 1000),
+          responseStatus: response.status,
+          responseBody,
+          attempts: newAttempts,
+          nextRetryAt,
         },
       });
-      
-      throw new AppError(`Webhook retry failed: ${error.message}`, HttpStatus.BAD_GATEWAY);
     }
-  })
-);
+  } catch (error: any) {
+    const newAttempts = delivery.attempts + 1;
+    
+    if (newAttempts >= 6) {
+      // Max retries exceeded - move to dead letter queue
+      await prisma.$transaction([
+        prisma.webhookDelivery.update({
+          where: { id: delivery.id },
+          data: {
+            responseStatus: 0,
+            responseBody: error.message,
+            attempts: newAttempts,
+            nextRetryAt: null,
+          },
+        }),
+        prisma.webhookDeadLetter.create({
+          data: {
+            webhookId: delivery.webhookId,
+            event: delivery.event,
+            payload: delivery.payload,
+            responseStatus: 0,
+            responseBody: error.message,
+            attempts: newAttempts,
+            lastError: error.message,
+          },
+        }),
+      ]);
+    } else {
+      // Schedule next retry with exponential backoff
+      const nextRetryAt = new Date(Date.now() + calculateBackoffDelay(newAttempts));
+      await prisma.webhookDelivery.update({
+        where: { id: delivery.id },
+        data: {
+          responseStatus: 0,
+          responseBody: error.message,
+          attempts: newAttempts,
+          nextRetryAt,
+        },
+      });
+    }
+    
+    throw new AppError(`Webhook delivery failed: ${error.message}`, HttpStatus.BAD_GATEWAY);
+  }
+}
 
 export default router;

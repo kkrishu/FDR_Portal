@@ -213,6 +213,7 @@ interface Rect {
 
 export function GuidedTour() {
   const user = useAuthStore((state) => state.user);
+  const isLoading = useAuthStore((state) => state.isLoading);
   const role = (user?.role ?? 'INSTITUTION') as UserRole;
 
   const [state, setState] = React.useState<'unseen' | 'done' | 'skipped'>('done');
@@ -224,16 +225,17 @@ export function GuidedTour() {
   const current = stepIndex === -1 ? WELCOME : stepIndex < steps.length ? steps[stepIndex] : DONE;
   const isCentered = stepIndex === -1 || stepIndex >= steps.length || !rect;
 
-  // Offer the tour once per role, after the dashboard has painted.
+  // Offer the tour once per role, after the dashboard has painted AND auth is loaded.
   React.useEffect(() => {
+    if (isLoading) return;
     setState(readState(role));
-  }, [role]);
+  }, [role, isLoading]);
 
   React.useEffect(() => {
-    if (state !== 'unseen') return;
+    if (isLoading || state !== 'unseen') return;
     const timer = setTimeout(() => setStepIndex(-1), 900);
     return () => clearTimeout(timer);
-  }, [state]);
+  }, [state, isLoading]);
 
   // Replay support from the account menu.
   React.useEffect(() => {
@@ -243,12 +245,13 @@ export function GuidedTour() {
       } catch {
         /* ignore */
       }
+      if (isLoading) return;
       setState('unseen');
       setStepIndex(-1);
     };
     window.addEventListener('fdr:replay-tour', replay);
     return () => window.removeEventListener('fdr:replay-tour', replay);
-  }, [role]);
+  }, [role, isLoading]);
 
   const measure = React.useCallback(() => {
     if (stepIndex < 0 || stepIndex >= steps.length) {
@@ -311,7 +314,7 @@ export function GuidedTour() {
 
   // Keyboard: arrows navigate, Esc skips.
   React.useEffect(() => {
-    if (!active || stepIndex === -1) return;
+    if (!active) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') finish('skipped');
       if (event.key === 'ArrowRight') next();
@@ -319,7 +322,7 @@ export function GuidedTour() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [active, stepIndex, next, back, finish]);
+  }, [active, next, back, finish]);
 
   if (!active) return null;
 
